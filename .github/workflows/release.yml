@@ -14,6 +14,8 @@ on:
         required: false
         type: boolean
         default: false
+  repository_dispatch:
+    types: [build]
 
 permissions:
   contents: write
@@ -33,7 +35,8 @@ jobs:
       - name: Generate matrix and tag
         id: gen
         run: |
-          INPUT="${{ github.event.inputs.pref_codes }}"
+          # workflow_dispatch と repository_dispatch の両方に対応
+          INPUT="${{ github.event.inputs.pref_codes || github.event.client_payload.pref_codes }}"
           if [ -z "$INPUT" ]; then
             CODES=$(seq -w 1 47 | xargs printf '%02d ')
           else
@@ -98,7 +101,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FORCE="${{ github.event.inputs.force }}"
+          FORCE="${{ github.event.inputs.force || github.event.client_payload.force }}"
 
           # 最新リリースの sha256sums.json を取得
           gh release download --repo ${{ github.repository }} \
