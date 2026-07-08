@@ -8,47 +8,49 @@
 
 ## ダウンロード
 
-各都道府県は独立したリリース（タグ: `pref-{NN}`）として配布されます。
+毎月1つのバージョンリリース（`v2026.07` 形式）に全47都道府県を収録します。
 50MB を超えるファイルは `.001` `.002` ... に分割されます。
 
-### 最新版を直接取得
+### Step 1: チェックサムを確認する
 
 ```bash
-# 大阪府 (27) — 50MB 未満の場合（単一ファイル）
-curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/download/pref-27/27_osaka.db.gz
+curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/latest/download/sha256sums.json
+```
+
+```bash
+# ローカルファイルの SHA256 と比較（例: 東京都）
+sha256sum 13_tokyo.db.gz
+jq -r '.files["13"].sha256' sha256sums.json
+# → 一致していれば更新不要
+```
+
+### Step 2: 必要な都道府県をダウンロードする
+
+```bash
+BASE=https://github.com/kobesoft-inc/abr-pref-db/releases/latest/download
+
+# 単一ファイルの都道府県（parts が1件）
+curl -fSL -O $BASE/27_osaka.db.gz
 gunzip 27_osaka.db.gz
 
-# 東京都 (13) — 50MB 超の場合（分割ファイル）
-curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/download/pref-13/13_tokyo.db.gz.001
-curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/download/pref-13/13_tokyo.db.gz.002
-curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/download/pref-13/13_tokyo.db.gz.003
+# 分割ファイルの都道府県（parts が複数）
+curl -fSL -O $BASE/13_tokyo.db.gz.001
+curl -fSL -O $BASE/13_tokyo.db.gz.002
+curl -fSL -O $BASE/13_tokyo.db.gz.003
 cat 13_tokyo.db.gz.* > 13_tokyo.db.gz && gunzip 13_tokyo.db.gz
 ```
 
-### 更新チェック（SHA256 比較）
+`sha256sums.json` の `parts` フィールドでファイル名を確認できます：
 
 ```bash
-# sha256sums.json を取得（常に最新）
-curl -fSL https://raw.githubusercontent.com/kobesoft-inc/abr-pref-db/main/sha256sums.json \
-  -o sha256sums.json
-
-# 東京都の最新 SHA256 を確認
-jq -r '.files["13"].sha256' sha256sums.json
-
-# ローカルの組立済み gz と比較
-sha256sum 13_tokyo.db.gz
-```
-
-`sha256sums.json` は `main` ブランチに常にコミットされています：
-
-```
-https://raw.githubusercontent.com/kobesoft-inc/abr-pref-db/main/sha256sums.json
+jq '.files["13"].parts' sha256sums.json
+# → ["13_tokyo.db.gz.001", "13_tokyo.db.gz.002", "13_tokyo.db.gz.003"]
 ```
 
 ## リリース構成
 
-各都道府県が独立したリリースタグ（`pref-01` 〜 `pref-47`）を持ちます。
-データに変更がない都道府県は更新されません。
+毎月1日に全都道府県をビルドし、前回リリースから変化があった場合のみ新しいリリース（`v2026.07` 形式）を作成します。
+変化がなければリリースはスキップされます。
 
 ## sha256sums.json の形式
 

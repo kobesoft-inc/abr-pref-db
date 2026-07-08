@@ -9,6 +9,11 @@ on:
         description: "対象の都道府県コード (カンマ区切り, 例: 13,27 / 空=全都道府県)"
         required: false
         type: string
+      force:
+        description: "変更がなくても強制リリース"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -23,8 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       pref_matrix: ${{ steps.gen.outputs.matrix }}
+      tag:         ${{ steps.gen.outputs.tag }}
     steps:
-      - name: Generate pref matrix
+      - name: Generate matrix and tag
         id: gen
         run: |
           INPUT="${{ github.event.inputs.pref_codes }}"
@@ -35,8 +41,9 @@ jobs:
           fi
           JSON=$(echo $CODES | tr ' ' '\n' | grep -v '^$' | jq -R . | jq -sc .)
           echo "matrix={\"pref_code\": $JSON}" >> $GITHUB_OUTPUT
+          echo "tag=v$(date -u '+%Y.%m')"      >> $GITHUB_OUTPUT
 
-  # ── 都道府県ごとにビルド ──────────────────────────────────
+  # ── 都道府県ごとにビルド（並列） ──────────────────────────
   build:
     needs: prepare
     runs-on: ubuntu-latest
@@ -62,7 +69,7 @@ jobs:
           path: dist/
           retention-days: 1
 
-  # ── 変更があった都道府県のみリリースを更新 ─────────────────
+  # ── 全都道府県をまとめてリリース ──────────────────────────
   release:
     needs: [prepare, build]
     runs-on: ubuntu-latest
@@ -80,100 +87,121 @@ jobs:
           path: dist/
           merge-multiple: true
 
-      - name: Update per-prefecture releases
+      - name: Generate sha256sums.json
+        run: |
+          python3 scripts/checksums.py --dist dist/ --out dist/sha256sums.json
+          echo "--- built sha256sums.json ---"
+          cat dist/sha256sums.json
+
+      - name: Check for changes vs latest release
+        id: diff
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          FORCE="${{ github.event.inputs.force }}"
+
+          # 最新リリースの sha256sums.json を取得
+          gh release download --repo ${{ github.repository }} \
+            --pattern sha256sums.json \
+            --output prev_sha256sums.json \
+            --clobber 2>/dev/null || echo '{"files":{}}' > prev_sha256sums.json
+
+          # 差分チェック
+          if [ "$FORCE" = "true" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Force release requested."
+          elif diff -q prev_sha256sums.json dist/sha256sums.json > /dev/null 2>&1; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes detected. Skipping release."
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Changes detected:"
+            diff prev_sha256sums.json dist/sha256sums.json || true
+          fi
+
+      - name: Create GitHub Release
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.prepare.outputs.tag }}"
+          DATE=$(date -u '+%Y-%m-%d')
+
+          # 同名タグがあれば削除
+          gh release delete "$TAG" --yes --cleanup-tag \
+            --repo ${{ github.repository }} 2>/dev/null || true
+
+          # リリースノート生成
           python3 - <<'PYEOF'
-          import json, os, subprocess, sys
+          import json
           from pathlib import Path
 
-          dist = Path("dist")
-          repo = os.environ["GITHUB_REPOSITORY"]
-
-          # 現在の sha256sums.json をロード（リポジトリの main ブランチから）
-          current_sums_path = Path("sha256sums.json")
-          current_sums = {}
-          if current_sums_path.exists():
-              current_sums = json.loads(current_sums_path.read_text()).get("files", {})
-
-          updated = []
-
-          for meta_path in sorted(dist.glob("*.meta.json")):
-              meta       = json.loads(meta_path.read_text())
-              pref_code  = meta["pref_code"]
-              pref_name  = meta["pref_name_en"]
-              new_sha256 = meta["sha256"]
-              parts      = meta["parts"]
-              size_mb    = meta["size"] / 1024 / 1024
-
-              # SHA256 比較 — 変化なしならスキップ
-              if current_sums.get(pref_code, {}).get("sha256") == new_sha256:
-                  print(f"[{pref_code}] No change, skipping.")
-                  continue
-
-              print(f"[{pref_code}] Changed ({new_sha256[:12]}...), updating release ...")
-
-              tag      = f"pref-{pref_code}"
-              title    = f"{pref_code}_{pref_name}"
-              part_str = "\n".join(f"- `{p}`" for p in parts)
+          sums = json.loads(Path("dist/sha256sums.json").read_text())
+          lines = []
+          for code, info in sorted(sums["files"].items()):
+              parts = info["parts"]
+              size_mb = info["size"] / 1024 / 1024
               if len(parts) == 1:
-                  dl_cmd = f"curl -fSL -O https://github.com/{repo}/releases/download/{tag}/{parts[0]}\ngunzip {parts[0]}"
+                  files_str = f"`{parts[0]}`"
               else:
-                  dl_cmd = "\n".join(f"curl -fSL -O https://github.com/{repo}/releases/download/{tag}/{p}" for p in parts)
-                  dl_cmd += f"\ncat {pref_code}_{pref_name}.db.gz.* > {pref_code}_{pref_name}.db.gz && gunzip {pref_code}_{pref_name}.db.gz"
+                  files_str = " ".join(f"`{p}`" for p in parts)
+              lines.append(f"| {info['pref_ja']} | {files_str} | {size_mb:.0f} MB | `{info['sha256'][:16]}...` |")
 
-              notes = f"""## {pref_code}_{pref_name}
+          notes = f"""## デジタル庁 アドレス・ベース・レジストリ SQLite 版
 
-**SHA256 (assembled gz):** `{new_sha256}`
-**Size:** {size_mb:.1f} MB
+**ビルド日:** {Path("/dev/stdin").read_text() if False else __import__('subprocess').check_output(['date', '-u', '+%Y-%m-%d']).decode().strip()}
 
-### ダウンロード
+### ダウンロード方法
 
 ```bash
-{dl_cmd}
+# 1. チェックサムファイルを取得
+curl -fSL -O https://github.com/${{ github.repository }}/releases/latest/download/sha256sums.json
+
+# 2. 目的の都道府県を確認（例: 東京都 13）
+jq '.files["13"]' sha256sums.json
+
+# 3. ダウンロード（単一ファイルの場合）
+curl -fSL -O https://github.com/${{ github.repository }}/releases/latest/download/13_tokyo.db.gz
+gunzip 13_tokyo.db.gz
+
+# 4. 分割ファイルの場合（parts が複数のとき）
+# parts に列挙されているファイルをすべてダウンロードして結合
+curl -fSL -O .../13_tokyo.db.gz.001
+curl -fSL -O .../13_tokyo.db.gz.002
+cat 13_tokyo.db.gz.* > 13_tokyo.db.gz && gunzip 13_tokyo.db.gz
 ```
 
-### ファイル
+### ローカルファイルの更新チェック
 
-{part_str}
+```bash
+# ローカルにある gz の SHA256 を確認
+sha256sum 13_tokyo.db.gz
 
----
-ソース: [デジタル庁 アドレス・ベース・レジストリ](https://www.digital.go.jp/policies/base_registry_address)"""
+# リモートの期待値と比較
+jq -r '.files["13"].sha256' sha256sums.json
+```
 
-              # 既存リリースを削除
-              subprocess.run(["gh", "release", "delete", tag, "--yes", "--cleanup-tag"],
-                             capture_output=True)
+### 都道府県別ファイル一覧
 
-              # 新規リリース作成
-              assets = [str(dist / p) for p in parts]
-              result = subprocess.run(
-                  ["gh", "release", "create", tag, *assets,
-                   "--title", title, "--notes", notes,
-                   "--repo", repo],
-                  capture_output=True, text=True
-              )
-              if result.returncode != 0:
-                  print(f"  ERROR: {result.stderr}", file=sys.stderr)
-              else:
-                  print(f"  Released: {result.stdout.strip()}")
-                  updated.append(pref_code)
+| 都道府県 | ファイル | サイズ | SHA256 (先頭16桁) |
+|---|---|---|---|
+""" + "\n".join(lines)
 
-          print(f"\nUpdated {len(updated)} prefectures: {updated}")
+          Path("release_notes.md").write_text(notes)
           PYEOF
 
-      - name: Generate updated sha256sums.json
-        run: |
-          python3 scripts/checksums.py \
-            --dist dist/ \
-            --out  sha256sums.json \
-            --merge sha256sums.json
+          gh release create "$TAG" dist/*.db.gz* dist/sha256sums.json \
+            --repo ${{ github.repository }} \
+            --title "アドレス・ベース・レジストリ $TAG" \
+            --notes-file release_notes.md
 
       - name: Commit sha256sums.json to main
+        if: steps.diff.outputs.changed == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          cp dist/sha256sums.json sha256sums.json
           git add sha256sums.json
           git diff --cached --quiet \
-            && echo "sha256sums.json unchanged, nothing to commit." \
-            || git commit -m "chore: update sha256sums.json [skip ci]" && git push
+            && echo "No commit needed." \
+            || (git commit -m "chore: update sha256sums.json [skip ci]" && git push)
