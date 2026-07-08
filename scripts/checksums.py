@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 """
-dist/ 内の .db.gz ファイルの SHA256 チェックサムを計算し、
-sha256sums.json を生成する。
+dist/ 内の *.meta.json を読み取り、sha256sums.json を生成する。
 
 Usage:
   python3 checksums.py [--dist dist] [--out sha256sums.json]
 """
 
 import argparse
-import hashlib
 import json
-import os
 import sys
 from pathlib import Path
 
-PREF_NAMES = {
+PREF_NAMES_JA = {
     "01": "北海道",   "02": "青森県",   "03": "岩手県",
     "04": "宮城県",   "05": "秋田県",   "06": "山形県",
     "07": "福島県",   "08": "茨城県",   "09": "栃木県",
@@ -34,45 +31,42 @@ PREF_NAMES = {
 }
 
 
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dist", default="dist", help="DB ディレクトリ")
-    parser.add_argument("--out", default="sha256sums.json", help="出力 JSON パス")
-    args = parser.parse_args()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dist", default="dist")
+    ap.add_argument("--out",  default="sha256sums.json")
+    ap.add_argument("--merge", help="既存の sha256sums.json をマージして更新のみ上書き")
+    args = ap.parse_args()
 
     dist = Path(args.dist)
     if not dist.exists():
-        print(f"Directory not found: {dist}", file=sys.stderr)
-        sys.exit(1)
+        sys.exit(f"Directory not found: {dist}")
 
-    files = {}
-    for db_gz in sorted(dist.glob("*.db.gz")):
-        name = db_gz.name
-        pref_code = name.split("_")[0]
-        checksum = sha256_file(db_gz)
-        files[name] = {
-            "sha256": checksum,
-            "size":   db_gz.stat().st_size,
-            "pref_code": pref_code,
-            "pref_ja":   PREF_NAMES.get(pref_code, ""),
+    # 既存の sha256sums.json があればロード（--merge 指定時）
+    existing: dict = {}
+    if args.merge:
+        merge_path = Path(args.merge)
+        if merge_path.exists():
+            existing = json.loads(merge_path.read_text())
+
+    files = dict(existing.get("files", {}))
+
+    for meta_path in sorted(dist.glob("*.meta.json")):
+        meta = json.loads(meta_path.read_text())
+        pref_code = meta["pref_code"]
+        files[pref_code] = {
+            "pref_code":    pref_code,
+            "pref_ja":      PREF_NAMES_JA.get(pref_code, ""),
+            "pref_name_en": meta["pref_name_en"],
+            "sha256":       meta["sha256"],
+            "size":         meta["size"],
+            "parts":        meta["parts"],
         }
-        print(f"{checksum}  {name}")
+        print(f"{meta['sha256']}  {pref_code} ({', '.join(meta['parts'])})")
 
-    result = {
-        "files": files,
-    }
-
-    out_path = Path(args.out)
-    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2))
-    print(f"\nWrote {out_path} ({len(files)} files)")
+    result = {"files": dict(sorted(files.items()))}
+    Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2))
+    print(f"\nWrote {args.out} ({len(files)} prefectures)")
 
 
 if __name__ == "__main__":

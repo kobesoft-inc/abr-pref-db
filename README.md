@@ -8,62 +8,74 @@
 
 ## ダウンロード
 
+各都道府県は独立したリリース（タグ: `pref-{NN}`）として配布されます。
+50MB を超えるファイルは `.001` `.002` ... に分割されます。
+
 ### 最新版を直接取得
 
 ```bash
-# 東京都 (13)
-curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/latest/download/13_tokyo.db.gz
-gunzip 13_tokyo.db.gz
-
-# 大阪府 (27)
-curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/latest/download/27_osaka.db.gz
+# 大阪府 (27) — 50MB 未満の場合（単一ファイル）
+curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/download/pref-27/27_osaka.db.gz
 gunzip 27_osaka.db.gz
+
+# 東京都 (13) — 50MB 超の場合（分割ファイル）
+curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/download/pref-13/13_tokyo.db.gz.001
+curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/download/pref-13/13_tokyo.db.gz.002
+curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/download/pref-13/13_tokyo.db.gz.003
+cat 13_tokyo.db.gz.* > 13_tokyo.db.gz && gunzip 13_tokyo.db.gz
 ```
 
 ### 更新チェック（SHA256 比較）
 
 ```bash
-# リモートのチェックサムを取得
-curl -fSL https://github.com/kobesoft-inc/abr-pref-db/releases/latest/download/sha256sums.json \
-  -o remote_sha256sums.json
+# sha256sums.json を取得（常に最新）
+curl -fSL https://raw.githubusercontent.com/kobesoft-inc/abr-pref-db/main/sha256sums.json \
+  -o sha256sums.json
 
-# ローカルファイルの SHA256 を確認
+# 東京都の最新 SHA256 を確認
+jq -r '.files["13"].sha256' sha256sums.json
+
+# ローカルの組立済み gz と比較
 sha256sum 13_tokyo.db.gz
-
-# jq で比較
-jq -r '.files["13_tokyo.db.gz"].sha256' remote_sha256sums.json
 ```
 
-`sha256sums.json` はリリースページとこのリポジトリの `main` ブランチの両方で公開されています：
+`sha256sums.json` は `main` ブランチに常にコミットされています：
 
 ```
 https://raw.githubusercontent.com/kobesoft-inc/abr-pref-db/main/sha256sums.json
 ```
 
-## ファイル一覧
+## リリース構成
 
-| ファイル名 | 都道府県 |
-|---|---|
-| `01_hokkaido.db.gz` | 北海道 |
-| `02_aomori.db.gz` | 青森県 |
-| ... | ... |
-| `47_okinawa.db.gz` | 沖縄県 |
-| `sha256sums.json` | 全ファイルの SHA256 チェックサム |
+各都道府県が独立したリリースタグ（`pref-01` 〜 `pref-47`）を持ちます。
+データに変更がない都道府県は更新されません。
 
 ## sha256sums.json の形式
 
 ```json
 {
   "files": {
-    "13_tokyo.db.gz": {
-      "sha256": "abc123...",
-      "size": 12345678,
+    "13": {
       "pref_code": "13",
-      "pref_ja": "東京都"
+      "pref_ja": "東京都",
+      "pref_name_en": "tokyo",
+      "sha256": "abc123...",
+      "size": 130438828,
+      "parts": ["13_tokyo.db.gz.001", "13_tokyo.db.gz.002", "13_tokyo.db.gz.003"]
+    },
+    "27": {
+      "pref_code": "27",
+      "pref_ja": "大阪府",
+      "pref_name_en": "osaka",
+      "sha256": "def456...",
+      "size": 45000000,
+      "parts": ["27_osaka.db.gz"]
     }
   }
 }
 ```
+
+`parts` が1件なら単一ファイル、複数なら連結して使用します。
 
 ## スキーマ
 

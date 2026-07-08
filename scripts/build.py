@@ -13,7 +13,9 @@ Usage:
 import argparse
 import csv
 import gzip
+import hashlib
 import io
+import json
 import os
 import sqlite3
 import sys
@@ -22,7 +24,8 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-ABR_BASE = "https://data.address-br.digital.go.jp"
+ABR_BASE   = "https://data.address-br.digital.go.jp"
+SPLIT_SIZE = 50 * 1024 * 1024  # 50 MB
 
 PREF_NAMES_EN = {
     "01": "hokkaido",   "02": "aomori",    "03": "iwate",
@@ -116,6 +119,33 @@ CREATE INDEX IF NOT EXISTS idx_parcel_town ON parcel(town_key);
 
 def log(msg: str):
     print(msg, flush=True)
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def split_gz(gz_path: Path, max_size: int = SPLIT_SIZE) -> list[Path]:
+    """gz が max_size を超える場合に .001/.002/... に分割して元ファイルを削除する"""
+    if gz_path.stat().st_size <= max_size:
+        return [gz_path]
+    parts = []
+    with open(gz_path, "rb") as f:
+        i = 1
+        while True:
+            chunk = f.read(max_size)
+            if not chunk:
+                break
+            part = gz_path.parent / f"{gz_path.name}.{i:03d}"
+            part.write_bytes(chunk)
+            parts.append(part)
+            i += 1
+    gz_path.unlink()
+    return parts
 
 
 def pref_url(data_type: str, pref_code: str) -> str:
@@ -346,8 +376,24 @@ def build(pref_code: str, out_dir: Path):
         fo.write(fi.read())
     db_path.unlink()
 
-    log(f"  → {gz.name} ({gz.stat().st_size / 1024 / 1024:.1f} MB)")
-    return gz
+    checksum   = sha256_file(gz)
+    total_size = gz.stat().st_size
+    parts      = split_gz(gz)   # 50MB 超なら分割（gz は削除済み）
+    part_names = [p.name for p in parts]
+
+    meta = {
+        "pref_code":    pref_code,
+        "pref_name_en": name,
+        "sha256":       checksum,
+        "size":         total_size,
+        "parts":        part_names,
+    }
+    meta_path = out_dir / f"{pref_code}_{name}.meta.json"
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    size_mb = total_size / 1024 / 1024
+    log(f"  → {part_names} ({size_mb:.1f} MB, sha256={checksum[:12]}...)")
+    return parts
 
 
 def main():
