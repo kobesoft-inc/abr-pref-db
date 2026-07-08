@@ -156,16 +156,29 @@ def city_url(data_type: str, lg_code: str) -> str:
     return f"{ABR_BASE}/{data_type}/city/{data_type}_city{lg_code}.csv.zip"
 
 
+_OPENER = urllib.request.build_opener()
+_OPENER.addheaders = [
+    ("User-Agent", "Mozilla/5.0 (compatible; abr-pref-db/1.0; +https://github.com/kobesoft-inc/abr-pref-db)"),
+]
+
+
 def fetch_csv(url: str) -> list[dict]:
     log(f"  Downloading {url.split('/')[-1]} ...")
-    try:
-        with urllib.request.urlopen(url, timeout=120) as r:
-            data = r.read()
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            log(f"  (404 - skipped)")
-            return []
-        raise
+    last_err = None
+    for attempt in range(1, 4):
+        try:
+            with _OPENER.open(url, timeout=120) as r:
+                data = r.read()
+            break
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                log(f"  (404 - skipped)")
+                return []
+            last_err = e
+            if attempt < 3:
+                import time; time.sleep(5 * attempt)
+    else:
+        raise last_err
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         rows = []
         for name in zf.namelist():
