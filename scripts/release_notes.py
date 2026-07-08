@@ -3,7 +3,7 @@
 dist/sha256sums.json からリリースノートを生成して release_notes.md に書き出す。
 
 Usage:
-  python3 release_notes.py --sums dist/sha256sums.json --repo kobesoft-inc/abr-pref-db
+  python3 release_notes.py --sums dist/sha256sums.json --repo kobesoft-inc/jp-abr-db
 """
 
 import argparse

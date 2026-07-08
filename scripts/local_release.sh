@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-REPO="kobesoft-inc/abr-pref-db"
+REPO="kobesoft-inc/jp-abr-db"
 DIST="dist"
 TAG="v$(date -u '+%Y.%m')"
 

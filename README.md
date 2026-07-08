@@ -1,4 +1,4 @@
-# abr-pref-db
+# jp-abr-db
 
 デジタル庁 [アドレス・ベース・レジストリ（ABR）](https://registry.digital.go.jp/) を
 都道府県単位の SQLite データベースにビルドし、毎月自動リリースします。
@@ -14,7 +14,7 @@
 ### Step 1: チェックサムを確認する
 
 ```bash
-curl -fSL -O https://github.com/kobesoft-inc/abr-pref-db/releases/latest/download/sha256sums.json
+curl -fSL -O https://github.com/kobesoft-inc/jp-abr-db/releases/latest/download/sha256sums.json
 ```
 
 ```bash
@@ -27,7 +27,7 @@ jq -r '.files["13"].sha256' sha256sums.json
 ### Step 2: 必要な都道府県をダウンロードする
 
 ```bash
-BASE=https://github.com/kobesoft-inc/abr-pref-db/releases/latest/download
+BASE=https://github.com/kobesoft-inc/jp-abr-db/releases/latest/download
 
 # 単一ファイルの都道府県（parts が1件）
 curl -fSL -O $BASE/27_osaka.db.gz
