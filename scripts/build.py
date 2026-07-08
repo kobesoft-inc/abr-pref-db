@@ -19,6 +19,7 @@ import sqlite3
 import sys
 import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ABR_BASE = "https://data.address-br.digital.go.jp"
@@ -98,6 +99,18 @@ CREATE TABLE IF NOT EXISTS rsdt_dsp (
     rep_lon     REAL
 );
 CREATE INDEX IF NOT EXISTS idx_rsdt_dsp_blk ON rsdt_dsp(rsdtblk_key);
+
+CREATE TABLE IF NOT EXISTS parcel (
+    parcel_key INTEGER PRIMARY KEY,
+    town_key   INTEGER REFERENCES town(town_key),
+    prc_id     TEXT NOT NULL,
+    prc_num1   TEXT,
+    prc_num2   TEXT,
+    prc_num3   TEXT,
+    rep_lat    REAL,
+    rep_lon    REAL
+);
+CREATE INDEX IF NOT EXISTS idx_parcel_town ON parcel(town_key);
 """
 
 
@@ -107,6 +120,10 @@ def log(msg: str):
 
 def pref_url(data_type: str, pref_code: str) -> str:
     return f"{ABR_BASE}/{data_type}/pref/{data_type}_pref{pref_code}.csv.zip"
+
+
+def city_url(data_type: str, lg_code: str) -> str:
+    return f"{ABR_BASE}/{data_type}/city/{data_type}_city{lg_code}.csv.zip"
 
 
 def fetch_csv(url: str) -> list[dict]:
@@ -277,6 +294,42 @@ def build(pref_code: str, out_dir: Path):
         dsp_insert,
     )
     log(f"  rsdt_dsp: {len(dsp_insert)}")
+
+    # ── parcel (市区町村単位で並列ダウンロード) ────────────
+    lg_codes = list(city_key.keys())
+
+    def fetch_parcel_for_city(lg: str):
+        rows = fetch_csv(city_url("mt_parcel", lg))
+        pos  = {r["prc_id"]: r for r in fetch_csv(city_url("mt_parcel_pos", lg))}
+        return lg, rows, pos
+
+    parcel_insert = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(fetch_parcel_for_city, lg): lg for lg in lg_codes}
+        for future in as_completed(futures):
+            lg, rows, pos_map = future.result()
+            ck = city_key.get(lg)
+            if ck is None:
+                continue
+            for r in rows:
+                mid   = r.get("machiaza_id", "")
+                prc_id = r.get("prc_id", "")
+                tk    = town_key.get((ck, mid))
+                p     = pos_map.get(prc_id, {})
+                parcel_insert.append((
+                    tk, prc_id,
+                    r.get("prc_num1") or None,
+                    r.get("prc_num2") or None,
+                    r.get("prc_num3") or None,
+                    real(p.get("rep_lat", "")),
+                    real(p.get("rep_lon", "")),
+                ))
+
+    con.executemany(
+        "INSERT OR IGNORE INTO parcel(town_key,prc_id,prc_num1,prc_num2,prc_num3,rep_lat,rep_lon) VALUES(?,?,?,?,?,?,?)",
+        parcel_insert,
+    )
+    log(f"  parcel: {len(parcel_insert)}")
 
     # ── meta ──────────────────────────────────────────────
     con.executemany("INSERT OR REPLACE INTO meta VALUES(?,?)", [
