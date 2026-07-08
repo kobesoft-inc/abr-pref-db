@@ -1,0 +1,8 @@
+dist/
+*.db
+*.db.gz
+*.csv
+*.zip
+__pycache__/
+*.pyc
+.env
