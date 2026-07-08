@@ -37,7 +37,7 @@ jobs:
         run: |
           INPUT="${{ github.event.inputs.pref_codes || github.event.client_payload.pref_codes }}"
           if [ -z "$INPUT" ]; then
-            CODES=$(seq -w 1 47 | xargs printf '%02d ')
+            CODES=$(seq 1 47 | xargs printf '%02d ')
           else
             CODES=$(echo "$INPUT" | tr ',' ' ')
           fi
