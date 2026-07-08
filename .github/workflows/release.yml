@@ -35,7 +35,6 @@ jobs:
       - name: Generate matrix and tag
         id: gen
         run: |
-          # workflow_dispatch と repository_dispatch の両方に対応
           INPUT="${{ github.event.inputs.pref_codes || github.event.client_payload.pref_codes }}"
           if [ -z "$INPUT" ]; then
             CODES=$(seq -w 1 47 | xargs printf '%02d ')
@@ -103,13 +102,11 @@ jobs:
         run: |
           FORCE="${{ github.event.inputs.force || github.event.client_payload.force }}"
 
-          # 最新リリースの sha256sums.json を取得
           gh release download --repo ${{ github.repository }} \
             --pattern sha256sums.json \
             --output prev_sha256sums.json \
             --clobber 2>/dev/null || echo '{"files":{}}' > prev_sha256sums.json
 
-          # 差分チェック
           if [ "$FORCE" = "true" ]; then
             echo "changed=true" >> $GITHUB_OUTPUT
             echo "Force release requested."
@@ -128,70 +125,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ needs.prepare.outputs.tag }}"
-          DATE=$(date -u '+%Y-%m-%d')
 
-          # 同名タグがあれば削除
+          python3 scripts/release_notes.py \
+            --sums dist/sha256sums.json \
+            --repo ${{ github.repository }} \
+            --out release_notes.md
+
           gh release delete "$TAG" --yes --cleanup-tag \
             --repo ${{ github.repository }} 2>/dev/null || true
-
-          # リリースノート生成
-          python3 - <<'PYEOF'
-          import json
-          from pathlib import Path
-
-          sums = json.loads(Path("dist/sha256sums.json").read_text())
-          lines = []
-          for code, info in sorted(sums["files"].items()):
-              parts = info["parts"]
-              size_mb = info["size"] / 1024 / 1024
-              if len(parts) == 1:
-                  files_str = f"`{parts[0]}`"
-              else:
-                  files_str = " ".join(f"`{p}`" for p in parts)
-              lines.append(f"| {info['pref_ja']} | {files_str} | {size_mb:.0f} MB | `{info['sha256'][:16]}...` |")
-
-          notes = f"""## デジタル庁 アドレス・ベース・レジストリ SQLite 版
-
-**ビルド日:** {Path("/dev/stdin").read_text() if False else __import__('subprocess').check_output(['date', '-u', '+%Y-%m-%d']).decode().strip()}
-
-### ダウンロード方法
-
-```bash
-# 1. チェックサムファイルを取得
-curl -fSL -O https://github.com/${{ github.repository }}/releases/latest/download/sha256sums.json
-
-# 2. 目的の都道府県を確認（例: 東京都 13）
-jq '.files["13"]' sha256sums.json
-
-# 3. ダウンロード（単一ファイルの場合）
-curl -fSL -O https://github.com/${{ github.repository }}/releases/latest/download/13_tokyo.db.gz
-gunzip 13_tokyo.db.gz
-
-# 4. 分割ファイルの場合（parts が複数のとき）
-# parts に列挙されているファイルをすべてダウンロードして結合
-curl -fSL -O .../13_tokyo.db.gz.001
-curl -fSL -O .../13_tokyo.db.gz.002
-cat 13_tokyo.db.gz.* > 13_tokyo.db.gz && gunzip 13_tokyo.db.gz
-```
-
-### ローカルファイルの更新チェック
-
-```bash
-# ローカルにある gz の SHA256 を確認
-sha256sum 13_tokyo.db.gz
-
-# リモートの期待値と比較
-jq -r '.files["13"].sha256' sha256sums.json
-```
-
-### 都道府県別ファイル一覧
-
-| 都道府県 | ファイル | サイズ | SHA256 (先頭16桁) |
-|---|---|---|---|
-""" + "\n".join(lines)
-
-          Path("release_notes.md").write_text(notes)
-          PYEOF
 
           gh release create "$TAG" dist/*.db.gz* dist/sha256sums.json \
             --repo ${{ github.repository }} \
