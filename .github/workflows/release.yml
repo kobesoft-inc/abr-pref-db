@@ -61,6 +61,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Test ABR server access
+        run: |
+          URL="https://data.address-br.digital.go.jp/mt_city/pref/mt_city_pref${{ matrix.pref_code }}.csv.zip"
+          echo "Testing: $URL"
+          curl -sS -o /dev/null -w "HTTP %{http_code} (IP: %{remote_ip})" "$URL"
+
       - name: Build ${{ matrix.pref_code }}
         run: python3 scripts/build.py --pref "${{ matrix.pref_code }}" --out dist/
 
