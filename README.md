@@ -128,28 +128,43 @@ WHERE rep_lat BETWEEN 35.68 AND 35.69
   AND rep_lon BETWEEN 139.75 AND 139.76;
 ```
 
-## ローカルビルド
+## ローカルビルド（開発用）
 
 ```bash
-# 1都道府県のみ
+# 1都道府県のみ（DB は dist/ に出力）
 python3 scripts/build.py --pref 13
-
-# 全都道府県（地番なし）
-python3 scripts/build.py --all --no-parcel
-
-# 全都道府県（地番あり）
-python3 scripts/build.py --all
 
 # チェックサム生成
 python3 scripts/checksums.py --dist dist/ --out dist/sha256sums.json
 ```
 
-## 更新スケジュール
+## 更新・ビルド方法
 
-毎月1日に GitHub Actions が自動実行し、最新のデータでリビルド・リリースします。
+### ローカルビルド＆リリース（推奨）
 
-手動実行は Actions タブの **Build and Release** → **Run workflow** から行えます。
-特定の都道府県のみ再ビルドする場合はカンマ区切りで指定できます（例: `13,27,01`）。
+`data.address-br.digital.go.jp` は日本国内 IP からのみアクセス可能なため、
+日本国内のマシンからビルドを実行する必要があります。
+
+```bash
+# 全都道府県をビルドして GitHub Releases にアップロード
+bash scripts/local_release.sh
+
+# 特定の都道府県のみ
+bash scripts/local_release.sh 13 27
+
+# 変更なくても強制リリース
+FORCE=true bash scripts/local_release.sh
+```
+
+事前に `gh auth login` で GitHub CLI の認証が必要です。
+
+### GitHub Actions（セルフホストランナーが必要）
+
+`.github/workflows/release.yml` に自動スケジュール（毎月1日）が設定されていますが、
+日本国内 IP のセルフホストランナーを接続した場合にのみ動作します。
+
+セルフホストランナーを接続したら、`build` ジョブの `runs-on: ubuntu-latest` を
+`runs-on: [self-hosted, japan]`（またはランナー設定のラベル）に変更してください。
 
 ## ライセンス
 
